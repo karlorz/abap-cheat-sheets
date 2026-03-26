@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -348,36 +349,28 @@ func TestGetDatasetRowsDryRun(t *testing.T) {
 func newTestApp(t *testing.T) *App {
 	t.Helper()
 
-	repoRoot, contractDir := writeTestFixtures(t)
-	app, err := New(config.Config{
+	fsys, contractDir := writeTestFixtures(t)
+	return mustNewApp(t, config.Config{
 		Addr:         ":0",
-		RepoRoot:     repoRoot,
+		FS:           fsys,
 		ContractDir:  contractDir,
 		QueryTimeout: 5 * time.Second,
+		AuthToken:    "",
 	})
-	if err != nil {
-		t.Fatalf("create app: %v", err)
-	}
-
-	return app
 }
 
 func newTestAppWithDSN(t *testing.T) *App {
 	t.Helper()
 
-	repoRoot, contractDir := writeTestFixtures(t)
-	app, err := New(config.Config{
+	fsys, contractDir := writeTestFixtures(t)
+	return mustNewApp(t, config.Config{
 		Addr:         ":0",
-		RepoRoot:     repoRoot,
+		FS:           fsys,
 		ContractDir:  contractDir,
 		QueryTimeout: 5 * time.Second,
 		SQLServerDSN: "sqlserver://user:pass@localhost:1433?database=PTD_READONLY",
+		AuthToken:    "",
 	})
-	if err != nil {
-		t.Fatalf("create app: %v", err)
-	}
-
-	return app
 }
 
 type namedFixture struct {
@@ -392,21 +385,33 @@ type namedFixture struct {
 func newNamedTestApp(t *testing.T, fixture namedFixture) *App {
 	t.Helper()
 
-	repoRoot, contractDir := writeNamedFixtures(t, fixture)
-	app, err := New(config.Config{
+	fsys, contractDir := writeNamedFixtures(t, fixture)
+	return mustNewApp(t, config.Config{
 		Addr:         ":0",
-		RepoRoot:     repoRoot,
+		FS:           fsys,
 		ContractDir:  contractDir,
 		QueryTimeout: 5 * time.Second,
+		AuthToken:    "",
 	})
+}
+
+func mustNewApp(t *testing.T, cfg config.Config) *App {
+	t.Helper()
+
+	app, err := New(cfg)
 	if err != nil {
 		t.Fatalf("create app: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := app.Close(); err != nil {
+			t.Fatalf("close app: %v", err)
+		}
+	})
 
 	return app
 }
 
-func writeTestFixtures(t *testing.T) (string, string) {
+func writeTestFixtures(t *testing.T) (fs.FS, string) {
 	t.Helper()
 
 	return writeNamedFixtures(t, namedFixture{
@@ -419,13 +424,10 @@ func writeTestFixtures(t *testing.T) (string, string) {
 	})
 }
 
-func writeNamedFixtures(t *testing.T, fixture namedFixture) (string, string) {
+func writeNamedFixtures(t *testing.T, fixture namedFixture) (fs.FS, string) {
 	t.Helper()
 
 	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
-		t.Fatalf("create fake git dir: %v", err)
-	}
 
 	sqlDir := filepath.Join(root, "catalog")
 	if err := os.MkdirAll(sqlDir, 0o755); err != nil {
@@ -462,7 +464,7 @@ func writeNamedFixtures(t *testing.T, fixture namedFixture) (string, string) {
 		t.Fatalf("write contract file: %v", err)
 	}
 
-	return root, contractDir
+	return os.DirFS(root), "contracts"
 }
 
 func mustValues(t *testing.T, raw string) url.Values {

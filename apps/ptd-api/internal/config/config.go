@@ -1,8 +1,8 @@
 package config
 
 import (
-	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -14,6 +14,9 @@ type Config struct {
 	ContractDir  string
 	QueryTimeout time.Duration
 	SQLServerDSN string
+	AuthToken    string
+	FS           fs.FS
+	WebFS        fs.FS
 }
 
 func Load() (Config, error) {
@@ -24,8 +27,19 @@ func Load() (Config, error) {
 
 	contractDir := os.Getenv("PTD_CONTRACT_DIR")
 	if contractDir == "" {
-		contractDir = filepath.Join(repoRoot, "files", "dashboard", "contracts")
+		contractDir = filepath.Join("files", "dashboard", "contracts")
 	}
+	if filepath.IsAbs(contractDir) {
+		if repoRoot == "" {
+			return Config{}, fmt.Errorf("absolute PTD_CONTRACT_DIR requires PTD_REPO_ROOT")
+		}
+
+		contractDir, err = filepath.Rel(repoRoot, contractDir)
+		if err != nil {
+			return Config{}, fmt.Errorf("resolve PTD_CONTRACT_DIR: %w", err)
+		}
+	}
+	contractDir = filepath.ToSlash(filepath.Clean(contractDir))
 
 	timeout := 30 * time.Second
 	if raw := os.Getenv("PTD_QUERY_TIMEOUT"); raw != "" {
@@ -42,6 +56,10 @@ func Load() (Config, error) {
 		ContractDir:  contractDir,
 		QueryTimeout: timeout,
 		SQLServerDSN: os.Getenv("PTD_SQLSERVER_DSN"),
+		AuthToken:    os.Getenv("PTD_AUTH_TOKEN"),
+	}
+	if repoRoot != "" {
+		cfg.FS = os.DirFS(repoRoot)
 	}
 
 	return cfg, nil
@@ -75,7 +93,7 @@ func findRepoRoot(start string) (string, error) {
 
 		parent := filepath.Dir(current)
 		if parent == current {
-			return "", errors.New("could not discover repo root; set PTD_REPO_ROOT explicitly")
+			return "", nil
 		}
 
 		current = parent

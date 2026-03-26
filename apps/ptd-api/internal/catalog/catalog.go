@@ -3,8 +3,8 @@ package catalog
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
+	"io/fs"
+	"path"
 	"slices"
 	"strings"
 )
@@ -28,13 +28,17 @@ type Limit struct {
 }
 
 type Catalog struct {
-	repoRoot    string
+	fsys        fs.FS
 	contractDir string
 	byID        map[string]Contract
 }
 
-func Load(repoRoot, contractDir string) (*Catalog, error) {
-	entries, err := filepath.Glob(filepath.Join(contractDir, "*.json"))
+func Load(fsys fs.FS, contractDir string) (*Catalog, error) {
+	if fsys == nil {
+		return nil, fmt.Errorf("catalog filesystem is not configured")
+	}
+
+	entries, err := fs.Glob(fsys, path.Join(contractDir, "*.json"))
 	if err != nil {
 		return nil, fmt.Errorf("glob contract files: %w", err)
 	}
@@ -43,22 +47,28 @@ func Load(repoRoot, contractDir string) (*Catalog, error) {
 	}
 
 	byID := make(map[string]Contract, len(entries))
-	for _, path := range entries {
-		contract, err := loadContract(path)
+	for _, contractPath := range entries {
+		content, err := fs.ReadFile(fsys, contractPath)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read contract file %s: %w", contractPath, err)
 		}
-		if err := validateContract(repoRoot, contract); err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
+
+		var contract Contract
+		if err := json.Unmarshal(content, &contract); err != nil {
+			return nil, fmt.Errorf("decode contract file %s: %w", contractPath, err)
+		}
+
+		if err := validateContract(fsys, contract); err != nil {
+			return nil, fmt.Errorf("%s: %w", contractPath, err)
 		}
 		if _, exists := byID[contract.ID]; exists {
-			return nil, fmt.Errorf("%s: duplicate dataset id %q", path, contract.ID)
+			return nil, fmt.Errorf("%s: duplicate dataset id %q", contractPath, contract.ID)
 		}
 		byID[contract.ID] = contract
 	}
 
 	return &Catalog{
-		repoRoot:    repoRoot,
+		fsys:        fsys,
 		contractDir: contractDir,
 		byID:        byID,
 	}, nil
@@ -96,30 +106,15 @@ func (c *Catalog) LoadSQL(id string) (string, Contract, error) {
 		return "", Contract{}, fmt.Errorf("unknown dataset id %q", id)
 	}
 
-	sqlPath := filepath.Join(c.repoRoot, filepath.FromSlash(contract.SQLFile))
-	content, err := os.ReadFile(sqlPath)
+	content, err := fs.ReadFile(c.fsys, contract.SQLFile)
 	if err != nil {
-		return "", Contract{}, fmt.Errorf("read sql file %s: %w", sqlPath, err)
+		return "", Contract{}, fmt.Errorf("read sql file %s: %w", contract.SQLFile, err)
 	}
 
 	return strings.TrimSpace(string(content)), contract, nil
 }
 
-func loadContract(path string) (Contract, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return Contract{}, fmt.Errorf("read contract file %s: %w", path, err)
-	}
-
-	var contract Contract
-	if err := json.Unmarshal(content, &contract); err != nil {
-		return Contract{}, fmt.Errorf("decode contract file %s: %w", path, err)
-	}
-
-	return contract, nil
-}
-
-func validateContract(repoRoot string, contract Contract) error {
+func validateContract(fsys fs.FS, contract Contract) error {
 	if contract.ID == "" {
 		return fmt.Errorf("missing id")
 	}
@@ -139,9 +134,8 @@ func validateContract(repoRoot string, contract Contract) error {
 		return fmt.Errorf("columns must not be empty")
 	}
 
-	sqlPath := filepath.Join(repoRoot, filepath.FromSlash(contract.SQLFile))
-	if _, err := os.Stat(sqlPath); err != nil {
-		return fmt.Errorf("sql_file %s is not readable: %w", sqlPath, err)
+	if _, err := fs.Stat(fsys, contract.SQLFile); err != nil {
+		return fmt.Errorf("sql_file %s is not readable: %w", contract.SQLFile, err)
 	}
 
 	return nil

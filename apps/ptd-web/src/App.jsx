@@ -39,6 +39,7 @@ const EXAMPLE_FILTERS = {
 };
 
 const API_NOTE = "API proxy target: /api via Vite dev server";
+const AUTH_TOKEN = import.meta.env.VITE_PTD_TOKEN || "";
 
 function buildDatasetUrl(datasetId, params) {
   const query = new URLSearchParams();
@@ -54,7 +55,8 @@ function buildDatasetUrl(datasetId, params) {
 }
 
 async function readJSON(path) {
-  const response = await fetch(path);
+  const headers = AUTH_TOKEN ? { Authorization: `Bearer ${AUTH_TOKEN}` } : undefined;
+  const response = await fetch(path, headers ? { headers } : undefined);
   const data = await response.json();
 
   if (!response.ok) {

@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -25,6 +27,9 @@ type App struct {
 	catalog *catalog.Catalog
 	db      *sql.DB
 	mux     *http.ServeMux
+	cache   *responseCache
+
+	cacheStop chan struct{}
 }
 
 var (
@@ -38,7 +43,7 @@ var (
 const blankToken = "[blank]"
 
 func New(cfg config.Config) (*App, error) {
-	cat, err := catalog.Load(cfg.RepoRoot, cfg.ContractDir)
+	cat, err := catalog.Load(cfg.FS, cfg.ContractDir)
 	if err != nil {
 		return nil, fmt.Errorf("load catalog: %w", err)
 	}
@@ -60,8 +65,12 @@ func New(cfg config.Config) (*App, error) {
 		catalog: cat,
 		db:      db,
 		mux:     http.NewServeMux(),
+		cache:   newResponseCache(),
+
+		cacheStop: make(chan struct{}),
 	}
 
+	app.cache.StartSweep(time.Minute, app.cacheStop)
 	app.routes()
 	return app, nil
 }
@@ -70,11 +79,54 @@ func (a *App) Handler() http.Handler {
 	return a.mux
 }
 
+func (a *App) Close() error {
+	if a.cacheStop != nil {
+		close(a.cacheStop)
+		a.cacheStop = nil
+	}
+	if a.db != nil {
+		return a.db.Close()
+	}
+
+	return nil
+}
+
 func (a *App) routes() {
 	a.mux.HandleFunc("GET /healthz", a.handleHealthz)
-	a.mux.HandleFunc("GET /api/datasets", a.handleListDatasets)
-	a.mux.HandleFunc("GET /api/datasets/{id}", a.handleGetDataset)
-	a.mux.HandleFunc("GET /api/datasets/{id}/rows", a.handleGetDatasetRows)
+	a.mux.HandleFunc("GET /api/datasets", a.requireAuth(a.handleListDatasets))
+	a.mux.HandleFunc("GET /api/datasets/{id}", a.requireAuth(a.handleGetDataset))
+	a.mux.HandleFunc("GET /api/datasets/{id}/rows", a.requireAuth(a.handleGetDatasetRows))
+	if a.cfg.WebFS != nil {
+		a.mux.Handle("GET /", a.spaHandler())
+	}
+}
+
+func (a *App) spaHandler() http.Handler {
+	fileServer := http.FileServerFS(a.cfg.WebFS)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPath := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+		if requestPath == "." {
+			requestPath = ""
+		}
+
+		if requestPath != "" {
+			if _, err := fs.Stat(a.cfg.WebFS, requestPath); err == nil {
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		indexContent, err := fs.ReadFile(a.cfg.WebFS, "index.html")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "static_asset_missing", "embedded web index.html is not available")
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(indexContent)
+	})
 }
 
 func (a *App) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -223,6 +275,15 @@ func (a *App) handleGetDatasetRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cacheKeyValue := cacheKey(contract.ID, r.URL.Query())
+	if !shouldBypassCache(r) {
+		if cachedBody, ok := a.cache.Get(cacheKeyValue); ok {
+			w.Header().Set("X-Cache", "HIT")
+			writeJSONBytes(w, http.StatusOK, cachedBody)
+			return
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), a.cfg.QueryTimeout)
 	defer cancel()
 
@@ -239,7 +300,7 @@ func (a *App) handleGetDatasetRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	payload := map[string]any{
 		"dataset_id":         contract.ID,
 		"title":              contract.Title,
 		"query_limit":        limit,
@@ -251,7 +312,17 @@ func (a *App) handleGetDatasetRows(w http.ResponseWriter, r *http.Request) {
 		"planned_filters":    contract.PlannedFilters,
 		"cache_ttl_seconds":  contract.CacheTTL,
 		"generated_at":       time.Now().UTC(),
-	})
+	}
+
+	body, err := marshalJSON(payload)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "encode_failed", err.Error())
+		return
+	}
+
+	a.cache.Set(cacheKeyValue, body, time.Duration(contract.CacheTTL)*time.Second)
+	w.Header().Set("X-Cache", "MISS")
+	writeJSONBytes(w, http.StatusOK, body)
 }
 
 func parseLimit(raw string, defaultLimit, maxLimit int) (int, error) {
@@ -306,9 +377,24 @@ func parseDryRun(raw string) (bool, error) {
 }
 
 func supportedQueryParams(datasetID string) []string {
-	keys := []string{"limit", "dry_run"}
+	keys := []string{"limit", "dry_run", "nocache"}
 	keys = append(keys, executableFilters(datasetID)...)
 	return keys
+}
+
+func shouldBypassCache(r *http.Request) bool {
+	cacheControl := strings.ToLower(r.Header.Get("Cache-Control"))
+	if strings.Contains(cacheControl, "no-cache") {
+		return true
+	}
+
+	raw := strings.TrimSpace(r.URL.Query().Get("nocache"))
+	switch strings.ToLower(raw) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func executableFilters(datasetID string) []string {
@@ -625,10 +711,26 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
+	body, err := marshalJSON(payload)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "encode_failed", err.Error())
+		return
+	}
+
+	writeJSONBytes(w, status, body)
+}
+
+func marshalJSON(payload any) ([]byte, error) {
+	body, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+
+	return append(body, '\n'), nil
+}
+
+func writeJSONBytes(w http.ResponseWriter, status int, body []byte) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-
-	encoder := json.NewEncoder(w)
-	encoder.SetIndent("", "  ")
-	_ = encoder.Encode(payload)
+	_, _ = w.Write(body)
 }

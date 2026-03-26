@@ -1,0 +1,4 @@
+cmd/ptd-api/_embed/*
+!cmd/ptd-api/_embed/placeholder.txt
+/ptd-api
+/ptd-api.exe
