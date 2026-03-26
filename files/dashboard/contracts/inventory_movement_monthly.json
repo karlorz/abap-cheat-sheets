@@ -1,0 +1,28 @@
+{
+  "id": "inventory-movement-monthly",
+  "title": "Inventory movement monthly",
+  "domain": "mm",
+  "sql_file": "files/dashboard/catalog/inventory_movement_monthly.sql",
+  "read_only": true,
+  "default_filters": {
+    "mandt": "200"
+  },
+  "planned_filters": [
+    "posting_from",
+    "posting_to",
+    "plant_code",
+    "movement_type"
+  ],
+  "limit": {
+    "default": 1000,
+    "max": 5000
+  },
+  "cache_ttl_seconds": 180,
+  "columns": [
+    "posting_yyyymm",
+    "plant_code",
+    "plant_name",
+    "movement_type",
+    "movement_row_count"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "id": "current-stock",
+  "title": "Current stock by plant and storage location",
+  "domain": "mm",
+  "sql_file": "files/dashboard/catalog/current_stock.sql",
+  "read_only": true,
+  "default_filters": {
+    "mandt": "200"
+  },
+  "planned_filters": [
+    "plant_code",
+    "storage_location"
+  ],
+  "limit": {
+    "default": 1000,
+    "max": 5000
+  },
+  "cache_ttl_seconds": 120,
+  "columns": [
+    "plant_code",
+    "plant_name",
+    "storage_location",
+    "material_row_count",
+    "unrestricted_stock",
+    "quality_stock",
+    "blocked_stock"
+  ]
+}

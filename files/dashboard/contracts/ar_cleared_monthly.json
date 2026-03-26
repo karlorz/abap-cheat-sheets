@@ -1,0 +1,30 @@
+{
+  "id": "ar-cleared-monthly",
+  "title": "AR cleared item monthly",
+  "domain": "ar",
+  "sql_file": "files/dashboard/catalog/ar_cleared_monthly.sql",
+  "read_only": true,
+  "default_filters": {
+    "mandt": "200"
+  },
+  "planned_filters": [
+    "clearing_from",
+    "clearing_to",
+    "company_code",
+    "original_document_type",
+    "clearing_document_type"
+  ],
+  "limit": {
+    "default": 1000,
+    "max": 5000
+  },
+  "cache_ttl_seconds": 300,
+  "columns": [
+    "clearing_yyyymm",
+    "company_code",
+    "company_name",
+    "original_document_type",
+    "clearing_document_type",
+    "cleared_item_count"
+  ]
+}

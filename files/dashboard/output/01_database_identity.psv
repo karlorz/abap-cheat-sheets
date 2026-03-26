@@ -1,0 +1,3 @@
+database_name|updateability|collation_name|compatibility_level
+-------------|-------------|--------------|-------------------
+PTD_READONLY|READ_ONLY|SQL_Latin1_General_CP850_BIN2|110

@@ -1,0 +1,31 @@
+{
+  "id": "ar-open-monthly",
+  "title": "AR open item monthly",
+  "domain": "ar",
+  "sql_file": "files/dashboard/catalog/ar_open_monthly.sql",
+  "read_only": true,
+  "default_filters": {
+    "mandt": "200"
+  },
+  "planned_filters": [
+    "posting_from",
+    "posting_to",
+    "company_code",
+    "currency_code",
+    "document_type"
+  ],
+  "limit": {
+    "default": 1000,
+    "max": 5000
+  },
+  "cache_ttl_seconds": 300,
+  "columns": [
+    "posting_yyyymm",
+    "company_code",
+    "company_name",
+    "currency_code",
+    "document_type",
+    "open_item_count",
+    "open_doc_amount"
+  ]
+}

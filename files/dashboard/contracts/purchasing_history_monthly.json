@@ -1,0 +1,30 @@
+{
+  "id": "purchasing-history-monthly",
+  "title": "Purchasing history monthly",
+  "domain": "mm",
+  "sql_file": "files/dashboard/catalog/purchasing_history_monthly.sql",
+  "read_only": true,
+  "default_filters": {
+    "mandt": "200"
+  },
+  "planned_filters": [
+    "posting_from",
+    "posting_to",
+    "history_category",
+    "plant_code"
+  ],
+  "limit": {
+    "default": 1000,
+    "max": 5000
+  },
+  "cache_ttl_seconds": 300,
+  "columns": [
+    "posting_yyyymm",
+    "history_category",
+    "plant_code",
+    "plant_name",
+    "history_row_count",
+    "total_quantity",
+    "total_local_amount"
+  ]
+}
