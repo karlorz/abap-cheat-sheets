@@ -91,7 +91,7 @@ If you want to verify the Go API over the tunneled connection instead of direct 
 ./files/dashboard/ptd_sql_tunnel.sh start msi-1 11433
 ./files/dashboard/ptd_sql_tunnel.sh status msi-1 11433
 
-# macOS: if the SQL login is stored in Keychain, URL-encode it before building the DSN
+# macOS: retrieve the PTD SQL login from Keychain and URL-encode it before building the DSN
 PW="$(security find-generic-password -w -a ptd_reader -s 'ptd_reader@msi-1')"
 ENC_PW="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$PW")"
 
