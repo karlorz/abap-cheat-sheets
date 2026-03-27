@@ -37,19 +37,20 @@ cd apps/ptd-web && npm run dev          # dev server on :5173, proxies /api → 
 - **Auth**: Static bearer token (env var) checked in Go middleware. Required before enabling live SQL.
 - **Caching**: In-process TTL cache in Go server, keyed by dataset+filters. Contract `cache_ttl_seconds` drives eviction.
 - **Warmup**: On boot, when `PTD_SQLSERVER_DSN` is set, the API pre-executes all 6 datasets with no filters and seeds the response cache. Failures are logged and skipped.
+- **Analytics scope**: Dataset SQL is intentionally scoped to `MANDT = '200'`. Validation passes when client `200` is present and warns if extra clients exist outside that scope.
 - **Deploy**: Single binary via Go `embed` — contracts, SQL files, and React `dist/` baked in. SSH + run on msi-1.
 - **Static serving**: Go serves React dist/ on the same port as the API. No separate web server.
 
 ## Known gaps (unresolved)
 
-- **MANDT mismatch is real.** Live validation on `msi-1` shows `ptd.BKPF` contains clients `050` and `200`. The `050` slice is small and old (`75` BKPF rows from `2009-02-01` to `2009-04-07`, mostly company codes `1000` and `6200`), while `200` is the dominant live client (`12,815` BKPF rows through `2026-02-13`). Dataset SQL still hardcodes `MANDT = '200'`, and `--validate` intentionally fails until the extra client is reviewed.
-- **Currency decimals remain a known limitation.** Live validation shows `JPY` in both `BSID` and `BSAD`, so `DECIMAL(17,2)` is lossy for at least one active 0-decimal currency. `KWD` and `BHD` were not observed in AR data, and `TCURX` is not present in the restored `PTD_READONLY` schema, so the decimal configuration cannot be confirmed from this copy. This is still ignored for the pilot.
+- **Currency decimals remain an accepted pilot limitation.** Live validation shows `JPY` in both `BSID` and `BSAD`, so `DECIMAL(17,2)` is lossy for at least one active 0-decimal currency. `KWD` and `BHD` were not observed in AR data, and `TCURX` is not present in the restored `PTD_READONLY` schema, so the decimal configuration cannot be confirmed from this copy. Keep this limitation for the pilot until a report explicitly requires currency-correct scaling.
 - **Data freshness undecided.** Don't know if the backup will be re-restored periodically. Cache flush strategy TBD.
 
 ## Resolved
 
 - **msi-1 is online.** Live SQL validation can run from the dev laptop via SQL login `ptd_reader`.
 - **Live SQL transport is enabled.** SQL Server mixed mode and TCP/IP are enabled, and `msi-1:1433` accepts remote SQL connections.
+- **MANDT scope is explicit.** Live data contains clients `050` and `200`, but PTD analytics are intentionally scoped to `200`. `--validate` now passes when `200` is present and warns about extra out-of-scope clients.
 - **Go embed is implemented.** The API can serve embedded contracts, SQL files, and web assets from a single binary.
 - **Bearer token is implemented.** Server mode requires `PTD_AUTH_TOKEN` whenever `PTD_SQLSERVER_DSN` is set.
 - **In-process cache is implemented.** Dataset row responses are cached by dataset+filters with TTL from each contract.
@@ -81,12 +82,13 @@ Warmup runs automatically when `PTD_SQLSERVER_DSN` is set. There is no separate 
 
 ## Live SQL validation findings
 
-1. `SELECT DISTINCT MANDT FROM ptd.BKPF` returns `050` and `200`, so the validation command currently fails only on the MANDT check.
+1. `SELECT DISTINCT MANDT FROM ptd.BKPF` returns `050` and `200`. Validation treats `200` as the explicit analytics client and warns when extra clients appear outside scope.
 2. The `050` slice appears small and historical rather than co-equal with `200`: `BKPF 75`, `BSID 5`, `BSAD 2`, `EKBE 7`, `MKPF 15`, `MSEG 16`, `MARD 5`; `BKPF` dates run from `2009-02-01` to `2009-04-07`, versus `200` rows extending to `2026-02-13`.
-3. Row counts for `MANDT = '200'`: `BKPF 12815`, `BSID 1651`, `BSAD 1381`, `EKBE 5254`, `MKPF 6468`, `MSEG 9957`, `MARD 1548`, `T001 29`, `T001W 15`.
-4. AR currencies in live `MANDT = '200'` data are:
+3. `T001` and `T001W` confirm that `050` is mostly template or residue master data, with limited overlap on keys such as company codes/plants `0001`, `1000`, `5000`, and `6200`. That overlap is why validation warns on extra clients instead of silently discarding them.
+4. Row counts for `MANDT = '200'`: `BKPF 12815`, `BSID 1651`, `BSAD 1381`, `EKBE 5254`, `MKPF 6468`, `MSEG 9957`, `MARD 1548`, `T001 29`, `T001W 15`.
+5. AR currencies in live `MANDT = '200'` data are:
    `BSID`: `CHF, EUR, GBP, HKD, JPY, RMB, USD, VND`
    `BSAD`: `CHF, EUR, HKD, JPY, RMB, USD`
-   This confirms an active JPY precision risk; `KWD` and `BHD` were not observed.
-5. `TCURX` is not present in the restored `PTD_READONLY` schema, so decimal metadata cannot be confirmed from this database copy.
-6. All 6 dataset queries execute successfully in live mode with `--validate`; recent `TOP 10` timings were about `0.02s` to `0.10s`.
+   This confirms an active JPY precision risk; `KWD` and `BHD` were not observed. The repo keeps this as an accepted pilot limitation for now.
+6. `TCURX` is not present in the restored `PTD_READONLY` schema, so decimal metadata cannot be confirmed from this database copy.
+7. All 6 dataset queries execute successfully in live mode with `--validate`; recent `TOP 10` timings were about `0.02s` to `0.14s`.

@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -34,8 +35,11 @@ func TestValidationReportFormat(t *testing.T) {
 			OK: true,
 		},
 		MANDTCheck: MANDTCheckResult{
-			Values: []string{"200"},
-			OK:     true,
+			Values:         []string{"050", "200"},
+			ExpectedClient: validationAnalyticsMANDT,
+			ExtraClients:   []string{"050"},
+			Warning:        "analytics scope is limited to client 200; extra clients observed: 050",
+			OK:             true,
 		},
 		RowCounts: []RowCountResult{
 			{Table: "BKPF", Count: 1234567},
@@ -55,6 +59,8 @@ func TestValidationReportFormat(t *testing.T) {
 		"PTD Validation Report",
 		"Schema check:",
 		"MANDT check:",
+		"Analytics scope: 200",
+		"Extra clients outside scope: [050]",
 		"Row counts:",
 		"Currency exposure:",
 		"Dataset timing (TOP 10, no filters):",
@@ -90,6 +96,12 @@ func TestValidateBuildsReport(t *testing.T) {
 	}
 	if !report.MANDTCheck.OK {
 		t.Fatalf("expected MANDT check ok, got %+v", report.MANDTCheck)
+	}
+	if got, want := report.MANDTCheck.Values, []string{"050", "200"}; !slices.Equal(got, want) {
+		t.Fatalf("unexpected MANDT values: got %v want %v", got, want)
+	}
+	if report.MANDTCheck.Warning == "" {
+		t.Fatalf("expected MANDT warning for extra clients, got %+v", report.MANDTCheck)
 	}
 	if len(report.RowCounts) != len(validationTables) {
 		t.Fatalf("expected %d row counts, got %d", len(validationTables), len(report.RowCounts))
@@ -162,6 +174,7 @@ func (validationTestConn) QueryContext(_ context.Context, query string, _ []driv
 		return &validationTestRows{
 			columns: []string{"MANDT"},
 			rows: [][]driver.Value{
+				{"050"},
 				{"200"},
 			},
 		}, nil

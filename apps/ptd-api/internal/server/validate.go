@@ -24,9 +24,10 @@ var validationTables = []string{
 }
 
 const (
-	validationDatasetLimit = 10
-	tableBKPF              = "BKPF"
-	tableBSID              = "BSID"
+	validationDatasetLimit   = 10
+	validationAnalyticsMANDT = "200"
+	tableBKPF                = "BKPF"
+	tableBSID                = "BSID"
 )
 
 type ValidationReport struct {
@@ -50,9 +51,12 @@ type SchemaCheckResult struct {
 }
 
 type MANDTCheckResult struct {
-	Values []string
-	Error  string
-	OK     bool
+	Values         []string
+	ExpectedClient string
+	ExtraClients   []string
+	Warning        string
+	Error          string
+	OK             bool
 }
 
 type RowCountResult struct {
@@ -152,6 +156,15 @@ func FormatValidationReport(report *ValidationReport) string {
 		builder.WriteString(fmt.Sprintf("  [fail] %s\n", report.MANDTCheck.Error))
 	} else {
 		builder.WriteString(fmt.Sprintf("  Distinct values: %s\n", formatStringList(report.MANDTCheck.Values)))
+		if report.MANDTCheck.ExpectedClient != "" {
+			builder.WriteString(fmt.Sprintf("  Analytics scope: %s\n", report.MANDTCheck.ExpectedClient))
+		}
+		if len(report.MANDTCheck.ExtraClients) > 0 {
+			builder.WriteString(fmt.Sprintf("  Extra clients outside scope: %s\n", formatStringList(report.MANDTCheck.ExtraClients)))
+		}
+		if report.MANDTCheck.Warning != "" {
+			builder.WriteString(fmt.Sprintf("  Warning: %s\n", report.MANDTCheck.Warning))
+		}
 		builder.WriteString(fmt.Sprintf("  Status: %s\n", formatStatus(report.MANDTCheck.OK)))
 	}
 
@@ -229,8 +242,11 @@ func (a *App) validateMANDT(ctx context.Context, schemaByTable map[string]string
 	}
 
 	return MANDTCheckResult{
-		Values: values,
-		OK:     slices.Equal(values, []string{"200"}),
+		Values:         values,
+		ExpectedClient: validationAnalyticsMANDT,
+		ExtraClients:   extraValidationClients(values, validationAnalyticsMANDT),
+		Warning:        mandtScopeWarning(values, validationAnalyticsMANDT),
+		OK:             slices.Contains(values, validationAnalyticsMANDT),
 	}
 }
 
@@ -247,7 +263,7 @@ func (a *App) validateRowCounts(ctx context.Context, schemaByTable map[string]st
 
 		count, err := a.queryCount(
 			ctx,
-			fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE MANDT = '200'", qualifyTable(schema, table)),
+			fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE MANDT = %s", qualifyTable(schema, table), quoteSQLString(validationAnalyticsMANDT)),
 		)
 		if err != nil {
 			result.Error = err.Error()
@@ -272,7 +288,7 @@ func (a *App) validateCurrencies(ctx context.Context, schemaByTable map[string]s
 
 	codes, err := a.queryDistinctStrings(
 		ctx,
-		fmt.Sprintf("SELECT DISTINCT WAERS FROM %s WHERE MANDT = '200' ORDER BY WAERS", qualifyTable(schema, tableBSID)),
+		fmt.Sprintf("SELECT DISTINCT WAERS FROM %s WHERE MANDT = %s ORDER BY WAERS", qualifyTable(schema, tableBSID), quoteSQLString(validationAnalyticsMANDT)),
 	)
 	if err != nil {
 		return CurrencyCheckResult{
@@ -464,6 +480,27 @@ func formatStatus(ok bool) string {
 	}
 
 	return "[fail]"
+}
+
+func extraValidationClients(values []string, expected string) []string {
+	extras := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == expected {
+			continue
+		}
+		extras = append(extras, value)
+	}
+
+	return extras
+}
+
+func mandtScopeWarning(values []string, expected string) string {
+	extras := extraValidationClients(values, expected)
+	if len(extras) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("analytics scope is limited to client %s; extra clients observed: %s", expected, strings.Join(extras, ", "))
 }
 
 func formatStringList(values []string) string {

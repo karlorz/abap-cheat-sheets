@@ -104,7 +104,8 @@ Expected live result today:
 
 - schema discovery passes
 - all 6 dataset timing checks pass
-- validation exits non-zero only because `ptd.BKPF` currently contains `MANDT` values `050` and `200`
+- validation passes when client `200` is present and warns that `ptd.BKPF` also contains out-of-scope client `050`
+- currency exposure still warns about `JPY` because the pilot keeps fixed 2-decimal amount shapes
 
 ## Use in Power BI Desktop
 
