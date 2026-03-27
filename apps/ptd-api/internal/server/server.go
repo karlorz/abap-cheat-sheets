@@ -237,15 +237,9 @@ func (a *App) handleGetDatasetRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sqlText, _, err := a.catalog.LoadSQL(id)
+	query, args, err := a.buildDatasetRowsQuery(contract, limit, r.URL.Query())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "load_sql_failed", err.Error())
-		return
-	}
-
-	query, args, err := buildDatasetQuery(contract.ID, sqlText, limit, r.URL.Query())
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_filters", err.Error())
+		writeDatasetRowsBuildError(w, err)
 		return
 	}
 
@@ -284,35 +278,16 @@ func (a *App) handleGetDatasetRows(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), a.cfg.QueryTimeout)
+	ctx, cancel := a.withQueryTimeout(r.Context())
 	defer cancel()
 
-	rows, err := a.db.QueryContext(ctx, query, args...)
+	columns, items, err := a.queryDatasetRows(ctx, query, args)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "query_failed", err.Error())
-		return
-	}
-	defer rows.Close()
-
-	columns, items, err := scanRows(rows)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "scan_failed", err.Error())
+		writeDatasetRowsExecutionError(w, err)
 		return
 	}
 
-	payload := map[string]any{
-		"dataset_id":         contract.ID,
-		"title":              contract.Title,
-		"query_limit":        limit,
-		"row_count":          len(items),
-		"columns":            columns,
-		"rows":               items,
-		"filter_support":     filterSupportMode(contract.ID),
-		"executable_filters": executableFilters(contract.ID),
-		"planned_filters":    contract.PlannedFilters,
-		"cache_ttl_seconds":  contract.CacheTTL,
-		"generated_at":       time.Now().UTC(),
-	}
+	payload := buildDatasetRowsPayload(contract, limit, columns, items, time.Now().UTC())
 
 	body, err := marshalJSON(payload)
 	if err != nil {

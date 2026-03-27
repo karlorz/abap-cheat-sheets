@@ -12,9 +12,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/karlchow/abap-cheat-sheets/apps/ptd-api/internal/catalog"
-	"github.com/karlchow/abap-cheat-sheets/apps/ptd-api/internal/config"
 )
 
 func TestCacheKeyDeterministic(t *testing.T) {
@@ -149,48 +146,7 @@ func newCacheTestApp(t *testing.T) *App {
 
 	registerCacheTestDriver()
 
-	fsys, contractDir := writeNamedFixtures(t, namedFixture{
-		id:             "fi-origin-monthly",
-		title:          "FI document origin monthly",
-		domain:         "fi",
-		plannedFilters: []string{"posting_from", "posting_to", "company_code", "fi_origin"},
-		columns:        []string{"posting_yyyymm", "company_code", "fi_origin"},
-		sqlText:        "SELECT posting_yyyymm, company_code, fi_origin FROM some_source",
-	})
-
-	cat, err := catalog.Load(fsys, contractDir)
-	if err != nil {
-		t.Fatalf("load catalog: %v", err)
-	}
-
-	db, err := sql.Open(cacheTestDriverName, "")
-	if err != nil {
-		t.Fatalf("open test db: %v", err)
-	}
-
-	app := &App{
-		cfg: config.Config{
-			Addr:         ":0",
-			FS:           fsys,
-			ContractDir:  contractDir,
-			QueryTimeout: 5 * time.Second,
-		},
-		catalog:   cat,
-		db:        db,
-		mux:       http.NewServeMux(),
-		cache:     newResponseCache(),
-		cacheStop: make(chan struct{}),
-	}
-	app.cache.StartSweep(time.Minute, app.cacheStop)
-	app.routes()
-
-	t.Cleanup(func() {
-		if err := app.Close(); err != nil {
-			t.Fatalf("close app: %v", err)
-		}
-	})
-
-	return app
+	return newNamedTestAppWithDB(t, fiOriginMonthlyFixture("SELECT posting_yyyymm, company_code, fi_origin FROM some_source"), cacheTestDriverName)
 }
 
 func seedDatasetRowsCache(t *testing.T, app *App, query url.Values) {

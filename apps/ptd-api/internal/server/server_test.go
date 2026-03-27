@@ -1,7 +1,9 @@
 package server
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/karlchow/abap-cheat-sheets/apps/ptd-api/internal/catalog"
 	"github.com/karlchow/abap-cheat-sheets/apps/ptd-api/internal/config"
 )
 
@@ -321,14 +324,7 @@ func TestBuildDatasetQueryRejectsInvalidPlantCode(t *testing.T) {
 }
 
 func TestGetDatasetRowsDryRun(t *testing.T) {
-	app := newNamedTestApp(t, namedFixture{
-		id:             "fi-origin-monthly",
-		title:          "FI document origin monthly",
-		domain:         "fi",
-		plannedFilters: []string{"posting_from", "posting_to", "company_code", "fi_origin"},
-		columns:        []string{"posting_yyyymm", "company_code", "fi_origin"},
-		sqlText:        "SELECT posting_yyyymm, company_code, fi_origin FROM some_source",
-	})
+	app := newNamedTestApp(t, fiOriginMonthlyFixture("SELECT posting_yyyymm, company_code, fi_origin FROM some_source"))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/datasets/fi-origin-monthly/rows?dry_run=true&posting_from=202601&company_code=1000", nil)
 	rec := httptest.NewRecorder()
@@ -344,6 +340,38 @@ func TestGetDatasetRowsDryRun(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "dataset_rows.posting_yyyymm \\u003e= @p1") {
 		t.Fatalf("expected filtered query in body, got %s", rec.Body.String())
 	}
+}
+
+func TestWriteDatasetRowsBuildErrorLoadSQL(t *testing.T) {
+	rec := httptest.NewRecorder()
+
+	writeDatasetRowsBuildError(rec, errors.Join(errLoadDatasetSQL, errors.New("missing sql file")))
+
+	assertErrorResponse(t, rec, http.StatusInternalServerError, "load_sql_failed")
+}
+
+func TestWriteDatasetRowsBuildErrorInvalidFilters(t *testing.T) {
+	rec := httptest.NewRecorder()
+
+	writeDatasetRowsBuildError(rec, errors.New("invalid company_code"))
+
+	assertErrorResponse(t, rec, http.StatusBadRequest, "invalid_filters")
+}
+
+func TestWriteDatasetRowsExecutionErrorScanFailed(t *testing.T) {
+	rec := httptest.NewRecorder()
+
+	writeDatasetRowsExecutionError(rec, errors.Join(errDatasetRowScan, errors.New("scan row failed")))
+
+	assertErrorResponse(t, rec, http.StatusInternalServerError, "scan_failed")
+}
+
+func TestWriteDatasetRowsExecutionErrorQueryFailed(t *testing.T) {
+	rec := httptest.NewRecorder()
+
+	writeDatasetRowsExecutionError(rec, errors.New("dial tcp timeout"))
+
+	assertErrorResponse(t, rec, http.StatusBadGateway, "query_failed")
 }
 
 func newTestApp(t *testing.T) *App {
@@ -382,6 +410,17 @@ type namedFixture struct {
 	sqlText        string
 }
 
+func fiOriginMonthlyFixture(sqlText string) namedFixture {
+	return namedFixture{
+		id:             "fi-origin-monthly",
+		title:          "FI document origin monthly",
+		domain:         "fi",
+		plannedFilters: []string{"posting_from", "posting_to", "company_code", "fi_origin"},
+		columns:        []string{"posting_yyyymm", "company_code", "fi_origin"},
+		sqlText:        sqlText,
+	}
+}
+
 func newNamedTestApp(t *testing.T, fixture namedFixture) *App {
 	t.Helper()
 
@@ -393,6 +432,46 @@ func newNamedTestApp(t *testing.T, fixture namedFixture) *App {
 		QueryTimeout: 5 * time.Second,
 		AuthToken:    "",
 	})
+}
+
+func newNamedTestAppWithDB(t *testing.T, fixture namedFixture, driverName string) *App {
+	t.Helper()
+
+	fsys, contractDir := writeNamedFixtures(t, fixture)
+
+	cat, err := catalog.Load(fsys, contractDir)
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+
+	db, err := sql.Open(driverName, "")
+	if err != nil {
+		t.Fatalf("open test db: %v", err)
+	}
+
+	app := &App{
+		cfg: config.Config{
+			Addr:         ":0",
+			FS:           fsys,
+			ContractDir:  contractDir,
+			QueryTimeout: 5 * time.Second,
+		},
+		catalog:   cat,
+		db:        db,
+		mux:       http.NewServeMux(),
+		cache:     newResponseCache(),
+		cacheStop: make(chan struct{}),
+	}
+	app.cache.StartSweep(time.Minute, app.cacheStop)
+	app.routes()
+
+	t.Cleanup(func() {
+		if err := app.Close(); err != nil {
+			t.Fatalf("close app: %v", err)
+		}
+	})
+
+	return app
 }
 
 func mustNewApp(t *testing.T, cfg config.Config) *App {
@@ -409,6 +488,17 @@ func mustNewApp(t *testing.T, cfg config.Config) *App {
 	})
 
 	return app
+}
+
+func assertErrorResponse(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, wantCode string) {
+	t.Helper()
+
+	if rec.Code != wantStatus {
+		t.Fatalf("expected %d, got %d body=%s", wantStatus, rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), wantCode) {
+		t.Fatalf("expected %s body, got %s", wantCode, rec.Body.String())
+	}
 }
 
 func writeTestFixtures(t *testing.T) (fs.FS, string) {

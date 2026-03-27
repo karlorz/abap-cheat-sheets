@@ -16,6 +16,8 @@ files/dashboard/
 # API — build & test
 cd apps/ptd-api && GOTOOLCHAIN=local go test ./...
 cd apps/ptd-api && GOTOOLCHAIN=local go build -o ptd-api ./cmd/ptd-api
+# Validate data assumptions on msi-1 (auth token not required for --validate)
+cd apps/ptd-api && PTD_SQLSERVER_DSN="sqlserver://ptd_reader:password@msi-1:1433?database=PTD_READONLY&encrypt=disable" GOTOOLCHAIN=local go run ./cmd/ptd-api --validate
 
 # Web — build & dev
 cd apps/ptd-web && npm install && npm run build
@@ -34,29 +36,37 @@ cd apps/ptd-web && npm run dev          # dev server on :5173, proxies /api → 
 
 - **Auth**: Static bearer token (env var) checked in Go middleware. Required before enabling live SQL.
 - **Caching**: In-process TTL cache in Go server, keyed by dataset+filters. Contract `cache_ttl_seconds` drives eviction.
+- **Warmup**: On boot, when `PTD_SQLSERVER_DSN` is set, the API pre-executes all 6 datasets with no filters and seeds the response cache. Failures are logged and skipped.
 - **Deploy**: Single binary via Go `embed` — contracts, SQL files, and React `dist/` baked in. SSH + run on msi-1.
 - **Static serving**: Go serves React dist/ on the same port as the API. No separate web server.
 
 ## Known gaps (unresolved)
 
-- **msi-1 is off.** Live SQL execution blocked until the Windows host is running with PTD_READONLY restored.
-- **MANDT unverified.** Haven't run `SELECT DISTINCT MANDT` on key tables. Could miss a second production client.
-- **Currency decimals.** SQL casts all amounts to `DECIMAL(17,2)`. If data contains JPY (0 dec) or KWD (3 dec), amounts may be wrong. Check `TCURX` table when msi-1 is available.
-- **Data scale unknown.** No row-count profiles for BKPF, BSID, EKBE, etc. GROUP BY queries may timeout on large tables.
+- **MANDT mismatch is real.** Live validation on `msi-1` shows `ptd.BKPF` contains clients `050` and `200`. Dataset SQL still hardcodes `MANDT = '200'`, and `--validate` intentionally fails until the extra client is reviewed.
+- **Currency decimals remain a known limitation.** Live validation shows `BSID` includes `JPY`, so `DECIMAL(17,2)` is lossy for at least one 0-decimal currency. This is still ignored for the pilot.
 - **Data freshness undecided.** Don't know if the backup will be re-restored periodically. Cache flush strategy TBD.
-- **Go embed not yet implemented.** Binary still discovers files via PTD_REPO_ROOT at runtime.
-- **Bearer token not yet implemented.** API currently has zero auth.
-- **In-process cache not yet implemented.** API hits SQL on every request.
+
+## Resolved
+
+- **msi-1 is online.** Live SQL validation can run from the dev laptop via SQL login `ptd_reader`.
+- **Live SQL transport is enabled.** SQL Server mixed mode and TCP/IP are enabled, and `msi-1:1433` accepts remote SQL connections.
+- **Go embed is implemented.** The API can serve embedded contracts, SQL files, and web assets from a single binary.
+- **Bearer token is implemented.** Server mode requires `PTD_AUTH_TOKEN` whenever `PTD_SQLSERVER_DSN` is set.
+- **In-process cache is implemented.** Dataset row responses are cached by dataset+filters with TTL from each contract.
+- **Validation entrypoint exists.** Run `go run ./cmd/ptd-api --validate` with `PTD_SQLSERVER_DSN` to check schema, `MANDT`, row counts, currencies, and dataset timings.
+- **Warmup is verified.** Booting the API with `PTD_SQLSERVER_DSN` preloads all 6 datasets, and the first unfiltered request returns `X-Cache: HIT`.
 
 ## Env vars
 
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `PTD_ADDR` | `:8080` | API listen address |
-| `PTD_REPO_ROOT` | auto-discovered via `.git` | Repo root (will be replaced by embed) |
+| `PTD_REPO_ROOT` | auto-discovered via `.git` | Repo root for local filesystem mode; embedded builds do not need it |
 | `PTD_CONTRACT_DIR` | `files/dashboard/contracts` | Contract directory (relative to repo root) |
 | `PTD_QUERY_TIMEOUT` | `30s` | Per-query SQL timeout |
 | `PTD_SQLSERVER_DSN` | _(none)_ | SQL Server connection string; omit for dry-run only mode |
+
+Warmup runs automatically when `PTD_SQLSERVER_DSN` is set. There is no separate `PTD_WARMUP` env var.
 
 ## Datasets (6 active)
 
@@ -69,10 +79,9 @@ cd apps/ptd-web && npm run dev          # dev server on :5173, proxies /api → 
 | inventory-movement-monthly | MM | MKPF + MSEG + T001W | posting_from/to, plant_code, movement_type |
 | current-stock | MM | MARD + T001W | plant_code, storage_location |
 
-## When msi-1 comes back — validation checklist
+## Live SQL validation findings
 
-1. `SELECT DISTINCT MANDT FROM BKPF` — confirm client 200 is the only production client
-2. `SELECT COUNT(*) FROM BKPF WHERE MANDT = '200'` — profile data scale
-3. `SELECT DISTINCT WAERS FROM BSID WHERE MANDT = '200'` — check currency exposure for DECIMAL(17,2) risk
-4. Run each of the 6 dataset queries via `dry_run=true` then with live SQL — compare result shapes
-5. Time the slowest GROUP BY queries — tune `PTD_QUERY_TIMEOUT` if needed
+1. `SELECT DISTINCT MANDT FROM ptd.BKPF` returns `050` and `200`, so the validation command currently fails only on the MANDT check.
+2. Row counts for `MANDT = '200'`: `BKPF 12815`, `BSID 1651`, `BSAD 1381`, `EKBE 5254`, `MKPF 6468`, `MSEG 9957`, `MARD 1548`, `T001 29`, `T001W 15`.
+3. `SELECT DISTINCT WAERS FROM ptd.BSID WHERE MANDT = '200'` returns `CHF, EUR, GBP, HKD, JPY, RMB, USD, VND`, confirming the JPY precision risk.
+4. All 6 dataset queries execute successfully in live mode with `--validate`; recent `TOP 10` timings were about `0.02s` to `0.10s`.
