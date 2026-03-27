@@ -69,8 +69,9 @@ Use these values in the Metabase UI:
 - Port: `11433` for the SSH tunnel example above
 - Database name: `PTD_READONLY`
 - Username / password:
-  - use a dedicated read-only SQL login if you create one later
-  - or use a temporary trusted/testing path only in a non-production pilot
+  - use SQL login `ptd_reader`
+  - on macOS, retrieve the password from Keychain service `ptd_reader@msi-1`
+  - paste the decoded password into the Metabase UI; URL encoding is only needed for DSN strings, not for the Metabase form fields
 - Schema: `ptd`
 
 ## First dashboards to build
