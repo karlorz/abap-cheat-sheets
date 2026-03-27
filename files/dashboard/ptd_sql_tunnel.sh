@@ -25,8 +25,14 @@ case "$ACTION" in
       exit 0
     fi
 
-    nohup ssh -o ExitOnForwardFailure=yes -N -L "${LOCAL_PORT}:localhost:${REMOTE_PORT}" "$HOST_ALIAS" >"$LOG_FILE" 2>&1 &
-    sleep 1
+    : >"$LOG_FILE"
+    if ssh -f -n -o ExitOnForwardFailure=yes -N -L "${LOCAL_PORT}:localhost:${REMOTE_PORT}" "$HOST_ALIAS" >"$LOG_FILE" 2>&1; then
+      sleep 1
+    else
+      rm -f "$PID_FILE"
+      printf 'Tunnel failed to start. Check %s\n' "$LOG_FILE" >&2
+      exit 1
+    fi
 
     if is_listening; then
       find_tunnel_pids | head -n 1 >"$PID_FILE"
@@ -34,6 +40,7 @@ case "$ACTION" in
       exit 0
     fi
 
+    rm -f "$PID_FILE"
     printf 'Tunnel failed to start. Check %s\n' "$LOG_FILE" >&2
     exit 1
     ;;
