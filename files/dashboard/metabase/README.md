@@ -32,6 +32,15 @@ Stop it:
 ./files/dashboard/ptd_sql_tunnel.sh stop msi-1 11433
 ```
 
+The tunnel helper is verified against the live SQL listener on `msi-1`. If you want an API-level smoke test before opening Metabase, run:
+
+```bash
+cd apps/ptd-api && \
+  PTD_SQLSERVER_DSN="sqlserver://ptd_reader:password@127.0.0.1:11433?database=PTD_READONLY&encrypt=disable" \
+  GOTOOLCHAIN=local \
+  go run ./cmd/ptd-api --validate
+```
+
 ## Start Metabase
 
 From repository root:

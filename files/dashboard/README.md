@@ -64,6 +64,7 @@ If you want the fastest OSS browser test:
 
 ```bash
 ./files/dashboard/ptd_sql_tunnel.sh start msi-1 11433
+./files/dashboard/ptd_sql_tunnel.sh status msi-1 11433
 docker compose -f files/dashboard/metabase/docker-compose.yml up -d
 ```
 
@@ -79,6 +80,31 @@ And in the Metabase SQL Server connection form use:
 - port: `11433`
 - database: `PTD_READONLY`
 - schema: `ptd`
+
+Direct SQL to `msi-1:1433` is now verified from the dev Mac, but the tunnel remains the safer default for browser tools and a useful fallback path when you want everything bound to localhost.
+
+## Validate the API through the tunnel
+
+If you want to verify the Go API over the tunneled connection instead of direct host access:
+
+```bash
+./files/dashboard/ptd_sql_tunnel.sh start msi-1 11433
+./files/dashboard/ptd_sql_tunnel.sh status msi-1 11433
+
+cd apps/ptd-api && \
+  PTD_SQLSERVER_DSN="sqlserver://ptd_reader:password@127.0.0.1:11433?database=PTD_READONLY&encrypt=disable" \
+  GOTOOLCHAIN=local \
+  go run ./cmd/ptd-api --validate
+
+cd ../..
+./files/dashboard/ptd_sql_tunnel.sh stop msi-1 11433
+```
+
+Expected live result today:
+
+- schema discovery passes
+- all 6 dataset timing checks pass
+- validation exits non-zero only because `ptd.BKPF` currently contains `MANDT` values `050` and `200`
 
 ## Use in Power BI Desktop
 
