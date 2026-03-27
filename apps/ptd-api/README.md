@@ -62,7 +62,11 @@ PTD_ADDR=:8080
 PTD_REPO_ROOT=/path/to/repo
 PTD_CONTRACT_DIR=/path/to/contracts
 PTD_QUERY_TIMEOUT=30s
-PTD_SQLSERVER_DSN='sqlserver://user:pass@host:1433?database=PTD_READONLY'
+
+# macOS example: read the PTD SQL login from Keychain and URL-encode it for the DSN
+PW="$(security find-generic-password -w -a ptd_reader -s 'ptd_reader@msi-1')"
+ENC_PW="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$PW")"
+PTD_SQLSERVER_DSN="sqlserver://ptd_reader:${ENC_PW}@msi-1:1433?database=PTD_READONLY&encrypt=disable"
 ```
 
 If `PTD_SQLSERVER_DSN` is not set, metadata endpoints still work and dataset execution returns a structured `503`.
