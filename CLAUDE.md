@@ -43,7 +43,7 @@ cd apps/ptd-web && npm run dev          # dev server on :5173, proxies /api → 
 ## Known gaps (unresolved)
 
 - **MANDT mismatch is real.** Live validation on `msi-1` shows `ptd.BKPF` contains clients `050` and `200`. The `050` slice is small and old (`75` BKPF rows from `2009-02-01` to `2009-04-07`, mostly company codes `1000` and `6200`), while `200` is the dominant live client (`12,815` BKPF rows through `2026-02-13`). Dataset SQL still hardcodes `MANDT = '200'`, and `--validate` intentionally fails until the extra client is reviewed.
-- **Currency decimals remain a known limitation.** Live validation shows `BSID` includes `JPY`, so `DECIMAL(17,2)` is lossy for at least one 0-decimal currency. This is still ignored for the pilot.
+- **Currency decimals remain a known limitation.** Live validation shows `JPY` in both `BSID` and `BSAD`, so `DECIMAL(17,2)` is lossy for at least one active 0-decimal currency. `KWD` and `BHD` were not observed in AR data, and `TCURX` is not present in the restored `PTD_READONLY` schema, so the decimal configuration cannot be confirmed from this copy. This is still ignored for the pilot.
 - **Data freshness undecided.** Don't know if the backup will be re-restored periodically. Cache flush strategy TBD.
 
 ## Resolved
@@ -84,5 +84,9 @@ Warmup runs automatically when `PTD_SQLSERVER_DSN` is set. There is no separate 
 1. `SELECT DISTINCT MANDT FROM ptd.BKPF` returns `050` and `200`, so the validation command currently fails only on the MANDT check.
 2. The `050` slice appears small and historical rather than co-equal with `200`: `BKPF 75`, `BSID 5`, `BSAD 2`, `EKBE 7`, `MKPF 15`, `MSEG 16`, `MARD 5`; `BKPF` dates run from `2009-02-01` to `2009-04-07`, versus `200` rows extending to `2026-02-13`.
 3. Row counts for `MANDT = '200'`: `BKPF 12815`, `BSID 1651`, `BSAD 1381`, `EKBE 5254`, `MKPF 6468`, `MSEG 9957`, `MARD 1548`, `T001 29`, `T001W 15`.
-4. `SELECT DISTINCT WAERS FROM ptd.BSID WHERE MANDT = '200'` returns `CHF, EUR, GBP, HKD, JPY, RMB, USD, VND`, confirming the JPY precision risk.
-5. All 6 dataset queries execute successfully in live mode with `--validate`; recent `TOP 10` timings were about `0.02s` to `0.10s`.
+4. AR currencies in live `MANDT = '200'` data are:
+   `BSID`: `CHF, EUR, GBP, HKD, JPY, RMB, USD, VND`
+   `BSAD`: `CHF, EUR, HKD, JPY, RMB, USD`
+   This confirms an active JPY precision risk; `KWD` and `BHD` were not observed.
+5. `TCURX` is not present in the restored `PTD_READONLY` schema, so decimal metadata cannot be confirmed from this database copy.
+6. All 6 dataset queries execute successfully in live mode with `--validate`; recent `TOP 10` timings were about `0.02s` to `0.10s`.
