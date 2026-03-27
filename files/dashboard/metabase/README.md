@@ -35,8 +35,11 @@ Stop it:
 The tunnel helper is verified against the live SQL listener on `msi-1`. If you want an API-level smoke test before opening Metabase, run:
 
 ```bash
+PW="$(security find-generic-password -w -a ptd_reader -s 'ptd_reader@msi-1')"
+ENC_PW="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$PW")"
+
 cd apps/ptd-api && \
-  PTD_SQLSERVER_DSN="sqlserver://ptd_reader:password@127.0.0.1:11433?database=PTD_READONLY&encrypt=disable" \
+  PTD_SQLSERVER_DSN="sqlserver://ptd_reader:${ENC_PW}@127.0.0.1:11433?database=PTD_READONLY&encrypt=disable" \
   GOTOOLCHAIN=local \
   go run ./cmd/ptd-api --validate
 ```

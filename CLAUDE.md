@@ -17,7 +17,9 @@ files/dashboard/
 cd apps/ptd-api && GOTOOLCHAIN=local go test ./...
 cd apps/ptd-api && GOTOOLCHAIN=local go build -o ptd-api ./cmd/ptd-api
 # Validate data assumptions on msi-1 (auth token not required for --validate)
-cd apps/ptd-api && PTD_SQLSERVER_DSN="sqlserver://ptd_reader:password@msi-1:1433?database=PTD_READONLY&encrypt=disable" GOTOOLCHAIN=local go run ./cmd/ptd-api --validate
+PW="$(security find-generic-password -w -a ptd_reader -s 'ptd_reader@msi-1')"
+ENC_PW="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$PW")"
+cd apps/ptd-api && PTD_SQLSERVER_DSN="sqlserver://ptd_reader:${ENC_PW}@msi-1:1433?database=PTD_READONLY&encrypt=disable" GOTOOLCHAIN=local go run ./cmd/ptd-api --validate
 
 # Web — build & dev
 cd apps/ptd-web && npm install && npm run build
